@@ -14,6 +14,7 @@ import org.slf4j.LoggerFactory;
 
 import java.io.File;
 import java.io.IOException;
+import java.time.Duration;
 
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 public class FileTransferTest {
@@ -22,6 +23,7 @@ public class FileTransferTest {
     private Integer port = 2222;
     private String username = "root";
     private String password = "password";
+    private String keyPath = ".ssh/id_rsa";
     private String localFile = "src/main/resources/testFile.txt";
     private String remoteFile = "sample.txt";
     private String localDir = "src/main/resources/";
@@ -76,16 +78,10 @@ public class FileTransferTest {
     @Test
     public void whenUploadFileUsingApacheVfs_thenSuccess() throws IOException {
         FileSystemManager manager = VFS.getManager();
-
-        FileSystemOptions opts = new FileSystemOptions();
-        SftpFileSystemConfigBuilder.getInstance().setStrictHostKeyChecking(opts, "no");
-        SftpFileSystemConfigBuilder.getInstance().setUserDirIsRoot(opts, false);
-        IdentityInfo myIdentityInfo = new IdentityInfo(new File(".ssh/id_rsa"));
-
-        SftpFileSystemConfigBuilder.getInstance(). setIdentityInfo(opts, myIdentityInfo);
-
         FileObject local = manager.resolveFile(System.getProperty("user.dir") + "/" + localFile);
-        FileObject remote = manager.resolveFile("sftp://" + username + ":" + password + "@" + remoteHost + "/" + remoteDir + "vfsFile.txt");
+        logger.info("local file path;", local);
+        FileObject remote = manager.resolveFile(createVfsConnectionString(remoteHost, username, password, keyPath, "", remoteFile), createDefaultVfsOptions(keyPath, ""));
+        logger.info("connection successful");
         remote.copyFrom(local, Selectors.SELECT_SELF);
         local.close();
         remote.close();
@@ -95,7 +91,9 @@ public class FileTransferTest {
     public void whenDownloadFileUsingApacheVfs_thenSuccess() throws IOException {
         FileSystemManager manager = VFS.getManager();
         FileObject local = manager.resolveFile(System.getProperty("user.dir") + "/" + localDir + "vfsFile.txt");
-        FileObject remote = manager.resolveFile("sftp://" + username + ":" + password + "@" + remoteHost + "/" + remoteFile);
+        logger.info("local file path;", local);
+        FileObject remote = manager.resolveFile(createVfsConnectionString(remoteHost, username, password, keyPath, "", remoteFile), createDefaultVfsOptions(keyPath, ""));
+        logger.info("connection successful", remote);
         local.copyFrom(remote, Selectors.SELECT_SELF);
         local.close();
         remote.close();
@@ -105,7 +103,7 @@ public class FileTransferTest {
     private ChannelSftp setupJsch() throws JSchException {
         JSch jsch = new JSch();
         logger.info("/.ssh/id_rsa");
-        jsch.addIdentity(".ssh/id_rsa");
+        jsch.addIdentity(keyPath);
         logger.info("private key added");
         Session jschSession = jsch.getSession(username, remoteHost, port);
         jschSession.setConfig("StrictHostKeyChecking", "no");
@@ -117,8 +115,42 @@ public class FileTransferTest {
         SSHClient client = new SSHClient();
         client.addHostKeyVerifier(new PromiscuousVerifier());
         client.connect(remoteHost, port);
-        client.authPublickey(username, ".ssh/id_rsa");
+        client.authPublickey(username, keyPath);
         logger.info("connection successful");
         return client;
+    }
+
+    private String createVfsConnectionString(String hostName, String username, String password, String keyPath, String passphrase, String remoteFilePath) {
+        if (keyPath != null) {
+            return "sftp://" + username + "@" + hostName + "/" + remoteFilePath;
+        } else {
+            return "sftp://" + username + ":" + password + "@" + hostName + "/" + remoteFilePath;
+        }
+    }
+
+    private FileSystemOptions createDefaultVfsOptions(final String keyPath, final String passphrase) throws FileSystemException {
+
+        //create options for sftp
+        FileSystemOptions options = new FileSystemOptions();
+        //ssh key
+        SftpFileSystemConfigBuilder.getInstance().setStrictHostKeyChecking(options, "no");
+        //set root directory to user home
+        SftpFileSystemConfigBuilder.getInstance().setUserDirIsRoot(options, true);
+        //timeout
+        SftpFileSystemConfigBuilder.getInstance().setSessionTimeout(options, Duration.ofSeconds(10000));
+
+        if (keyPath != null) {
+            IdentityInfo identityInfo = null;
+            if(passphrase != ""){
+                identityInfo = new IdentityInfo(new File(keyPath), passphrase.getBytes());
+            }else{
+                identityInfo =  new IdentityInfo(new File(keyPath));
+            }
+            SftpFileSystemConfigBuilder.getInstance().setIdentityProvider(options, identityInfo);
+            SftpFileSystemConfigBuilder.getInstance().setPreferredAuthentications(options, "publickey");
+        }
+
+
+        return options;
     }
 }
